@@ -42,3 +42,5 @@ coverage/
 
 # Local Docker / tooling
 docker-data/
+supabase/.temp/
+supabase/.branches/

@@ -3,11 +3,17 @@ import { describe, expect, it } from 'vitest';
 import App from './App';
 
 describe('App component', () => {
-  it('renders OurApp title and foundation indicator', () => {
+  it('renders OurApp title and foundation indicator', async () => {
     render(<App />);
     expect(
-      screen.getByRole('heading', { level: 1, name: /OurApp/i })
+      await screen.findByRole('heading', { level: 1, name: /OurApp/i })
     ).toBeInTheDocument();
-    expect(screen.getByText(/Phase 1 — Foundation Ready/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Phase 2 — Identity & Database Ready/i)
+    ).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Sign in/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: /Create account/i })
+    ).toBeInTheDocument();
   });
 });

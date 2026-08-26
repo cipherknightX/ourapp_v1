@@ -57,22 +57,23 @@ library/search shows saved source + extracted information
 ## 2. Sign-In / App Session Flow
 
 ```text
-React UI
-   ↓
+React UI (LoginPage / SignupPage)
+   ↓ calls supabase.auth.signInWithPassword / signUp
 Supabase Auth
-   ↓
-authenticated session/token
-   ↓
-FastAPI protected API request
-   ↓
-backend validates authentication context
-   ↓
-backend authorizes requested resource/action
-   ↓
-response
+   ↓ returns session { access_token (JWT), user }
+Browser AuthContext stores session & restores via onAuthStateChange
+   ↓ attaches Authorization: Bearer <access_token>
+FastAPI Protected Route (e.g. GET /api/v1/auth/me)
+   ↓ get_current_user dependency
+JWKS Public Key Verification (PyJWKClient against /.well-known/jwks.json)
+   ↓ validates signature, exp, iss, aud="authenticated", sub UUID
+Authoritative UserContext(user_id=sub, email=...)
+   ↓ protected resource execution
+Response (UserRead DTO)
 ```
 
-Exact token/session transport is finalized during auth implementation, but authorization remains server-side.
+Authorization is derived strictly from the verified JWT `sub` UUID; client-supplied identifiers in request bodies or query parameters are ignored.
+
 
 ## 3. Instagram Connection Flow
 

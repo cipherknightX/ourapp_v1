@@ -30,11 +30,24 @@ Never silently change field meaning.
 
 ### OurApp User
 
-A stable internal user identity anchors ownership.
+A stable internal user identity (`UUID`) anchors all resource ownership:
+
+```text
+UserContext (Internal Backend Authenticated Context):
+    user_id: UUID
+    email: str | None
+    role: str | None
+
+UserRead (Client API DTO for /api/v1/auth/me):
+    id: UUID
+    email: str | None
+```
+
+The verified JWT `sub` claim is the sole authoritative identity key.
 
 ### Instagram Identity
 
-Use a stable provider-scoped identifier for account mapping.
+Use a stable provider-scoped identifier for account mapping:
 
 ```text
 ConnectedInstagram

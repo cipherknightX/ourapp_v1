@@ -9,6 +9,8 @@ dependencies = [
     "uvicorn[standard]>=0.28.0",
     "pydantic>=2.6.0",
     "pydantic-settings>=2.2.0",
+    "pyjwt[crypto]>=2.8.0",
+    "cryptography>=42.0.0",
 ]
 
 [project.optional-dependencies]
@@ -37,7 +39,9 @@ select = [
     "B",   # flake8-bugbear
     "UP",  # pyupgrade
 ]
-ignore = []
+ignore = [
+    "B008",  # Allow Depends() in FastAPI function parameter defaults
+]
 
 [tool.mypy]
 python_version = "3.12"

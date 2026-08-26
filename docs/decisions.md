@@ -56,6 +56,8 @@ What evidence would justify reconsidering?
 | DEC-0004 | Heavy processing uses Redis + Celery workers | Accepted |
 | DEC-0005 | Provider integrations use adapters | Accepted |
 | DEC-0006 | PostgreSQL search first; pgvector later if justified | Accepted |
+| DEC-0007 | Supabase JWKS asymmetric JWT verification | Accepted |
+| DEC-0008 | Trigger-driven user identity and scoped RLS | Accepted |
 
 ---
 
@@ -201,3 +203,56 @@ Avoid Elasticsearch/separate vector infrastructure before real search requiremen
 ### Consequences
 
 Initial schema/search design should support useful keyword/structured retrieval without assuming a vector service.
+
+---
+
+## DEC-0007 — Supabase JWKS asymmetric JWT verification
+
+Date: 2026-08-26  
+Status: Accepted  
+Scope: architecture/security/auth
+
+### Context
+
+Protected backend endpoints must verify user identity without trusting client-supplied identifiers or sharing symmetric server secrets unnecessarily.
+
+### Decision
+
+Use Supabase JWKS (`/.well-known/jwks.json`) via `PyJWKClient` to verify asymmetric JWT signatures (RS256/ES256) and validate `exp`, `iss`, `aud` (`authenticated`), and `sub` (UUID).
+
+### Reasoning
+
+- Public key verification removes the need to distribute `SUPABASE_SECRET_KEY` or symmetric JWT secrets to the API server when not needed.
+- Asymmetric keys support key rotation seamlessly.
+- Strict claim validation guarantees that only valid authenticated sessions issued by the Supabase project can access protected endpoints.
+
+### Consequences
+
+FastAPI routes derive identity via the `get_current_user` dependency. Verified `sub` UUID is the sole authoritative ownership key.
+
+---
+
+## DEC-0008 — Trigger-driven user identity and scoped RLS
+
+Date: 2026-08-26  
+Status: Accepted  
+Scope: architecture/data/security
+
+### Context
+
+The application needs an application-level `public.users` entity linked to `auth.users` with strict Row Level Security.
+
+### Decision
+
+Create `public.users` via a `SECURITY DEFINER` trigger `on_auth_user_created` (`SET search_path = ''`) upon `auth.users` insert. RLS grants `SELECT` and `UPDATE` only for `auth.uid() = id`.
+
+### Reasoning
+
+- Prevents client-side spoofing or manual creation of user rows.
+- Hardens the trigger against schema injection.
+- Enforces user isolation at both database (RLS) and API layers.
+
+### Consequences
+
+Application records link to `public.users(id)`. Direct client `INSERT` and `DELETE` on `public.users` are omitted.
+

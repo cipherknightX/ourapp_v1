@@ -25,23 +25,29 @@
 
 ---
 
-## 2. User
+## 2. User (`public.users`)
 
 Purpose: application ownership root.
 
-Conceptual fields:
+Schema (`supabase/migrations/20260826000000_create_users_foundation.sql`):
 
-```text
-id
-auth_provider_reference
-created_at
-updated_at
+```sql
+CREATE TABLE public.users (
+    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    email TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 ```
 
-Rules:
-- stable ID;
-- ownership derives from authenticated identity;
-- client cannot override ownership.
+Creation & RLS Rules:
+- Created strictly via `SECURITY DEFINER` trigger `handle_new_user()` on `auth.users AFTER INSERT`.
+- RLS enabled:
+  - `users_select_own`: `FOR SELECT USING (auth.uid() = id)`
+  - `users_update_own`: `FOR UPDATE USING (auth.uid() = id) WITH CHECK (auth.uid() = id)`
+  - Client direct `INSERT` and `DELETE` are forbidden.
+- Authoritative identifier: `id` (matching `auth.users.id` / JWT `sub`).
+- Client cannot override ownership.
 
 ---
 

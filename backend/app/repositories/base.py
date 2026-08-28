@@ -76,3 +76,15 @@ class RepositoryProtocol(ABC):
         self, user_id: UUID, limit: int = 50
     ) -> list[SavedItemRead]:
         pass
+
+    @abstractmethod
+    def get_saved_item_by_id(
+        self, user_id: UUID, saved_item_id: UUID
+    ) -> SavedItemRead | None:
+        """Retrieves a single saved item owned by user_id."""
+        pass
+
+    @abstractmethod
+    def delete_saved_item(self, user_id: UUID, saved_item_id: UUID) -> bool:
+        """Deletes a single saved item owned by user_id. Returns True if deleted."""
+        pass

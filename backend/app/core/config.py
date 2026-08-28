@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     INSTAGRAM_VERIFY_TOKEN: str = ""
     INSTAGRAM_APP_ID: str = ""
     INSTAGRAM_APP_SECRET: str = ""
+    INSTAGRAM_ACCESS_TOKEN: str = ""
+    INSTAGRAM_GRAPH_API_VERSION: str = "v26.0"
     INSTAGRAM_BOT_USERNAME: str = "save.this.for.me"
 
     @property

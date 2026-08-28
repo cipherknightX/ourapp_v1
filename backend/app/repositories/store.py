@@ -195,6 +195,23 @@ class InMemoryRepository(RepositoryProtocol):
             results.sort(key=lambda x: x.created_at, reverse=True)
             return results[:limit]
 
+    def get_saved_item_by_id(
+        self, user_id: UUID, saved_item_id: UUID
+    ) -> SavedItemRead | None:
+        with self._lock:
+            item = self._saved_items.get(saved_item_id)
+            if not item or item.user_id != user_id:
+                return None
+            return item
+
+    def delete_saved_item(self, user_id: UUID, saved_item_id: UUID) -> bool:
+        with self._lock:
+            item = self._saved_items.get(saved_item_id)
+            if not item or item.user_id != user_id:
+                return False
+            del self._saved_items[saved_item_id]
+            return True
+
 
 _default_repository: RepositoryProtocol | None = None
 

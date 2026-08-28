@@ -43,6 +43,12 @@ export interface SavedItemRead {
   updated_at: string;
 }
 
+export interface SendToMeResponse {
+  status: string;
+  message: string;
+  saved_item_id?: string;
+}
+
 async function request<T>(
   path: string,
   token: string,
@@ -112,4 +118,26 @@ export async function getSavedItems(
   limit = 50
 ): Promise<SavedItemRead[]> {
   return request<SavedItemRead[]>(`/api/v1/saved-items?limit=${limit}`, token);
+}
+
+export async function deleteSavedItem(
+  token: string,
+  savedItemId: string
+): Promise<void> {
+  return request<void>(`/api/v1/saved-items/${savedItemId}`, token, {
+    method: 'DELETE',
+  });
+}
+
+export async function sendSavedItemToMe(
+  token: string,
+  savedItemId: string
+): Promise<SendToMeResponse> {
+  return request<SendToMeResponse>(
+    `/api/v1/saved-items/${savedItemId}/send-to-me`,
+    token,
+    {
+      method: 'POST',
+    }
+  );
 }

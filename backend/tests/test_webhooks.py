@@ -1,12 +1,18 @@
 import hashlib
 import hmac
 import json
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.core.config import settings
+from app.integrations.instagram.client import (
+    InstagramClient,
+    InstagramClientError,
+    get_instagram_client,
+)
 from app.main import app
 from app.repositories.store import InMemoryRepository, get_repository
 
@@ -92,63 +98,144 @@ async def test_webhook_pairing_handshake_flow(
     configure_test_repo: InMemoryRepository,
 ) -> None:
     user_id = uuid4()
-    # 1. User requested pairing code
     from app.services.instagram_service import InstagramService
 
     svc = InstagramService(configure_test_repo)
     pending = svc.create_pending_connection(user_id)
     pairing_code = pending.connection_code
 
-    # 2. Instagram sends webhook with user DMing the pairing code
-    sender_id = "ig_sender_12345"
-    payload = {
-        "object": "instagram",
-        "entry": [
-            {
-                "id": "bot_page_id",
-                "time": 1718000000,
-                "messaging": [
-                    {
-                        "sender": {"id": sender_id},
-                        "recipient": {"id": "bot_page_id"},
-                        "timestamp": 1718000000000,
-                        "message": {
-                            "mid": "m_mid_handshake_1",
-                            "text": pairing_code,
-                        },
-                    }
-                ],
-            }
-        ],
-    }
+    mock_client = MagicMock(spec=InstagramClient)
+    mock_client.send_text_message.return_value = {"status": "ok"}
+    app.dependency_overrides[get_instagram_client] = lambda: mock_client
 
-    body = json.dumps(payload).encode("utf-8")
-    sig = sign_payload(body)
+    try:
+        sender_id = "ig_sender_12345"
+        payload = {
+            "object": "instagram",
+            "entry": [
+                {
+                    "id": "bot_page_id",
+                    "time": 1718000000,
+                    "messaging": [
+                        {
+                            "sender": {"id": sender_id},
+                            "recipient": {"id": "bot_page_id"},
+                            "timestamp": 1718000000000,
+                            "message": {
+                                "mid": "m_mid_handshake_1",
+                                "text": pairing_code,
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
 
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post(
-            "/api/v1/webhooks/instagram",
-            content=body,
-            headers={"X-Hub-Signature-256": sig},
-        )
+        body = json.dumps(payload).encode("utf-8")
+        sig = sign_payload(body)
 
-    assert response.status_code == 200
-    data = response.json()
-    assert data["events_processed"] == 1
-    assert data["results"][0]["action"] == "connected"
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/api/v1/webhooks/instagram",
+                content=body,
+                headers={"X-Hub-Signature-256": sig},
+            )
 
-    # Verify user now has active connected account
-    connections = configure_test_repo.get_user_connections(user_id)
-    assert len(connections) == 1
-    assert connections[0].instagram_scoped_id == sender_id
-    assert connections[0].status == "ACTIVE"
+        assert response.status_code == 200
+        data = response.json()
+        assert data["events_processed"] == 1
+        assert data["results"][0]["action"] == "connected"
+        assert data["results"][0]["confirmation_dm_sent"] is True
+
+        # Verify confirmation DM was attempted
+        mock_client.send_text_message.assert_called_once()
+        assert mock_client.send_text_message.call_args[1]["recipient_id"] == sender_id
+
+        # Verify user now has active connected account
+        connections = configure_test_repo.get_user_connections(user_id)
+        assert len(connections) == 1
+        assert connections[0].instagram_scoped_id == sender_id
+        assert connections[0].status == "ACTIVE"
+    finally:
+        app.dependency_overrides.pop(get_instagram_client, None)
+
+
+@pytest.mark.asyncio
+async def test_webhook_pairing_handshake_messaging_failure_retains_connection(
+    configure_test_repo: InMemoryRepository,
+) -> None:
+    user_id = uuid4()
+    from app.services.instagram_service import InstagramService
+
+    svc = InstagramService(configure_test_repo)
+    pending = svc.create_pending_connection(user_id)
+    pairing_code = pending.connection_code
+
+    # Mock client throws error on send
+    mock_client = MagicMock(spec=InstagramClient)
+    mock_client.send_text_message.side_effect = InstagramClientError(
+        "Rate limit exceeded"
+    )
+    app.dependency_overrides[get_instagram_client] = lambda: mock_client
+
+    try:
+        sender_id = "ig_sender_fail_case"
+        payload = {
+            "object": "instagram",
+            "entry": [
+                {
+                    "id": "bot_page_id",
+                    "time": 1718000000,
+                    "messaging": [
+                        {
+                            "sender": {"id": sender_id},
+                            "recipient": {"id": "bot_page_id"},
+                            "timestamp": 1718000000000,
+                            "message": {
+                                "mid": "m_mid_handshake_fail",
+                                "text": pairing_code,
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+
+        body = json.dumps(payload).encode("utf-8")
+        sig = sign_payload(body)
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/api/v1/webhooks/instagram",
+                content=body,
+                headers={"X-Hub-Signature-256": sig},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["results"][0]["action"] == "connected"
+        assert data["results"][0]["confirmation_dm_sent"] is False
+
+        # Connection MUST remain persisted and active
+        connections = configure_test_repo.get_user_connections(user_id)
+        assert len(connections) == 1
+        assert connections[0].instagram_scoped_id == sender_id
+        assert connections[0].status == "ACTIVE"
+    finally:
+        app.dependency_overrides.pop(get_instagram_client, None)
 
 
 @pytest.mark.asyncio
 async def test_webhook_reel_share_and_idempotency(
     configure_test_repo: InMemoryRepository,
 ) -> None:
+    """A.
+
+    Existing ig_reel fixture continues to produce exactly the same
+    SavedItem/source_url.
+    """
     user_id = uuid4()
     sender_id = "ig_sender_777"
 
@@ -224,6 +311,147 @@ async def test_webhook_reel_share_and_idempotency(
     assert items[0].provider_item_id == "C3abc123XYZ"
     assert items[0].source_event_id == message_id
     assert items[0].processing_status == "SAVED"
+
+
+@pytest.mark.asyncio
+async def test_webhook_static_post_canonical_url(
+    configure_test_repo: InMemoryRepository,
+) -> None:
+    """B & C.
+
+    Static/image post produces a SavedItem with canonical source_url.
+    """
+    user_id = uuid4()
+    sender_id = "ig_sender_888"
+
+    configure_test_repo.upsert_connected_instagram(
+        user_id=user_id,
+        instagram_scoped_id=sender_id,
+        display_username="bob_ig",
+    )
+
+    post_url = "https://www.instagram.com/p/C987654321/"
+    message_id = "mid_post_event_888"
+
+    payload = {
+        "object": "instagram",
+        "entry": [
+            {
+                "id": "bot_page_id",
+                "time": 1718000000,
+                "messaging": [
+                    {
+                        "sender": {"id": sender_id},
+                        "recipient": {"id": "bot_page_id"},
+                        "timestamp": 1718000000000,
+                        "message": {
+                            "mid": message_id,
+                            "attachments": [
+                                {
+                                    "type": "share",
+                                    "payload": {
+                                        "url": post_url,
+                                        "title": "Sunset in Santorini",
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+
+    body = json.dumps(payload).encode("utf-8")
+    sig = sign_payload(body)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        res = await client.post(
+            "/api/v1/webhooks/instagram",
+            content=body,
+            headers={"X-Hub-Signature-256": sig},
+        )
+        assert res.status_code == 200
+        assert res.json()["results"][0]["action"] == "saved"
+
+    items = configure_test_repo.get_saved_items_for_user(user_id)
+    assert len(items) == 1
+    assert items[0].source_url == post_url
+    assert items[0].provider_item_id == "C987654321"
+    assert items[0].caption == "Sunset in Santorini"
+
+
+@pytest.mark.asyncio
+async def test_webhook_static_post_cdn_asset(
+    configure_test_repo: InMemoryRepository,
+) -> None:
+    """B & D.
+
+    Static/image post with CDN asset produces SavedItem without storing CDN as
+    source_url.
+    """
+    user_id = uuid4()
+    sender_id = "ig_sender_999"
+
+    configure_test_repo.upsert_connected_instagram(
+        user_id=user_id,
+        instagram_scoped_id=sender_id,
+        display_username="charlie_ig",
+    )
+
+    message_id = "mid_image_event_999"
+    cdn_url = "https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id=asset_999"
+
+    payload = {
+        "object": "instagram",
+        "entry": [
+            {
+                "id": "bot_page_id",
+                "time": 1718000000,
+                "messaging": [
+                    {
+                        "sender": {"id": sender_id},
+                        "recipient": {"id": "bot_page_id"},
+                        "timestamp": 1718000000000,
+                        "message": {
+                            "mid": message_id,
+                            "attachments": [
+                                {
+                                    "type": "image",
+                                    "payload": {
+                                        "id": "asset_999",
+                                        "url": cdn_url,
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+
+    body = json.dumps(payload).encode("utf-8")
+    sig = sign_payload(body)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        res = await client.post(
+            "/api/v1/webhooks/instagram",
+            content=body,
+            headers={"X-Hub-Signature-256": sig},
+        )
+        assert res.status_code == 200
+        assert res.json()["results"][0]["action"] == "saved"
+
+    items = configure_test_repo.get_saved_items_for_user(user_id)
+    assert len(items) == 1
+    # CDN URL is never stored as canonical source_url
+    assert items[0].source_url == ""
+    assert items[0].provider_item_id == "asset_999"
+    # Raw metadata preserves the full payload with the CDN url
+    assert items[0].raw_metadata is not None
 
 
 @pytest.mark.asyncio

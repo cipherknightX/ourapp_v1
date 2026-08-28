@@ -268,3 +268,50 @@ def test_supabase_repo_create_saved_item_idempotent() -> None:
     )
     assert is_new2 is False
     assert item2.id == item_id
+
+
+def test_supabase_repo_get_and_delete_saved_item() -> None:
+    user_id = uuid4()
+    item_id = uuid4()
+    now = datetime.now(UTC)
+
+    def handler(request: httpx.Request) -> Response:
+        if request.method == "GET":
+            return Response(
+                200,
+                json=[
+                    {
+                        "id": str(item_id),
+                        "user_id": str(user_id),
+                        "connected_instagram_id": None,
+                        "platform": "instagram",
+                        "source_url": "https://instagram.com/reel/123/",
+                        "provider_item_id": "123",
+                        "source_event_id": "mid_1",
+                        "caption": "Reel Caption",
+                        "creator_username": None,
+                        "thumbnail_url": None,
+                        "processing_status": "SAVED",
+                        "raw_metadata": {},
+                        "created_at": now.isoformat(),
+                        "updated_at": now.isoformat(),
+                    }
+                ],
+            )
+        if request.method == "DELETE":
+            return Response(
+                200,
+                json=[{"id": str(item_id)}],
+            )
+        return Response(404)
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.Client(transport=transport, base_url="http://test/rest/v1")
+    repo = SupabaseRepository(client=client)
+
+    item = repo.get_saved_item_by_id(user_id=user_id, saved_item_id=item_id)
+    assert item is not None
+    assert item.id == item_id
+
+    deleted = repo.delete_saved_item(user_id=user_id, saved_item_id=item_id)
+    assert deleted is True

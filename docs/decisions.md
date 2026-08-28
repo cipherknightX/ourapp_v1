@@ -61,6 +61,9 @@ What evidence would justify reconsidering?
 | DEC-0009 | Instagram DM pairing code connection handshake | Accepted |
 | DEC-0010 | Webhook message mid idempotency constraint | Accepted |
 | DEC-0011 | Fast-path durable SavedItem capture lifecycle | Accepted |
+| DEC-0012 | Owner-isolated SavedItem deletion | Accepted |
+| DEC-0013 | Outbound Instagram text messaging via Meta Send API | Accepted |
+| DEC-0014 | Canonical source URL normalization vs Meta CDN assets | Accepted |
 
 ---
 
@@ -330,5 +333,70 @@ The webhook fast path extracts the Reel URL/metadata, persists the `SavedItem` i
 
 - Guarantees zero lost saves even if future AI workers fail.
 - Keeps webhook response times under 200ms.
+
+---
+
+## DEC-0012 — Owner-isolated SavedItem deletion
+
+Date: 2026-08-29  
+Status: Accepted  
+Scope: architecture/data/security
+
+### Context
+
+Users need the ability to delete items they have saved in SaveThisForMe without risking cross-user data tampering or affecting connected account records.
+
+### Decision
+
+Provide `DELETE /api/v1/saved-items/{saved_item_id}`. The backend queries `DELETE /saved_items?id=eq.{saved_item_id}&user_id=eq.{current_user.id}`. Returns 204 No Content if removed, 404 Not Found if missing or non-owned.
+
+### Consequences
+
+Deletion is permanently executed in Supabase PostgreSQL storage. `ConnectedInstagram` and unrelated user items are untouched.
+
+---
+
+## DEC-0013 — Outbound Instagram text messaging via Meta Send API
+
+Date: 2026-08-29  
+Status: Accepted  
+Scope: architecture/integration/security
+
+### Context
+
+Users need two outbound DM capabilities:
+1. Sending a saved item back to their own Instagram DM ("Send to me").
+2. Receiving a connection confirmation DM when pairing succeeds.
+
+### Decision
+
+Implement an isolated server-side `InstagramClient` sending text messages to `https://graph.instagram.com/{api_version}/me/messages` authenticated via server-only `INSTAGRAM_ACCESS_TOKEN`.
+- "Send to me" resolves the recipient IGSID strictly on the server from the user's active `connected_instagram` record and sends the canonical URL as text.
+- Connection confirmation DM attempts delivery following successful pairing persistence. Failure of the confirmation message is logged as a safe diagnostic and does not roll back the active connection.
+
+### Consequences
+
+Client never provides recipient IDs, URLs, or tokens. Tokens are never logged or exposed.
+
+---
+
+## DEC-0014 — Canonical source URL normalization vs Meta CDN assets
+
+Date: 2026-08-29  
+Status: Accepted  
+Scope: architecture/data/reliability
+
+### Context
+
+Meta webhooks provide canonical URLs for shared Instagram Reels (`instagram.com/reel/...`), but for images/shared media, Meta may only provide temporary CDN asset URLs (`lookaside.fbsbx.com`).
+
+### Decision
+
+Only canonical Instagram Reel, Post, or TV URLs are stored in `SavedItem.source_url`. Meta CDN asset URLs (`fbsbx.com`, `cdninstagram.com`, `fbcdn.net`) are preserved in `raw_metadata`, but never set as canonical `source_url`. When `source_url` is non-canonical, the UI displays "Source unavailable" and disables View / Send-to-me.
+
+### Consequences
+
+Guarantees data integrity and prevents broken external links or exposing temporary CDN asset signatures to users.
+
 
 

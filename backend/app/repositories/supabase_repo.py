@@ -410,3 +410,54 @@ class SupabaseRepository(RepositoryProtocol):
             )
             for r in rows
         ]
+
+    def get_saved_item_by_id(
+        self, user_id: UUID, saved_item_id: UUID
+    ) -> SavedItemRead | None:
+        response = self._client.get(
+            "/saved_items",
+            params={
+                "id": f"eq.{saved_item_id}",
+                "user_id": f"eq.{user_id}",
+                "select": "*",
+            },
+        )
+        response.raise_for_status()
+        rows = response.json()
+        if not rows or not isinstance(rows, list):
+            return None
+
+        row = rows[0]
+        return SavedItemRead(
+            id=UUID(row["id"]),
+            user_id=UUID(row["user_id"]),
+            connected_instagram_id=(
+                UUID(row["connected_instagram_id"])
+                if row.get("connected_instagram_id")
+                else None
+            ),
+            platform=row["platform"],
+            source_url=row["source_url"],
+            provider_item_id=row.get("provider_item_id"),
+            source_event_id=row.get("source_event_id"),
+            caption=row.get("caption"),
+            creator_username=row.get("creator_username"),
+            thumbnail_url=row.get("thumbnail_url"),
+            processing_status=row["processing_status"],
+            raw_metadata=row.get("raw_metadata") or {},
+            created_at=datetime.fromisoformat(row["created_at"]),
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+        )
+
+    def delete_saved_item(self, user_id: UUID, saved_item_id: UUID) -> bool:
+        response = self._client.delete(
+            "/saved_items",
+            params={
+                "id": f"eq.{saved_item_id}",
+                "user_id": f"eq.{user_id}",
+            },
+            headers={"Prefer": "return=representation"},
+        )
+        response.raise_for_status()
+        rows = response.json()
+        return bool(rows and isinstance(rows, list))

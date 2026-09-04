@@ -22,9 +22,9 @@ describe('SavedItemsList component', () => {
     render(<SavedItemsList token={token} />);
 
     expect(
-      screen.getByRole('heading', { name: /Captured Reels/i })
+      screen.getByRole('heading', { name: /Saved Library/i })
     ).toBeInTheDocument();
-    expect(await screen.findByText(/No saved Reels yet/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Nothing here yet/i)).toBeInTheDocument();
   });
 
   it('renders list of saved items with canonical View link and triggers Send to me', async () => {
@@ -52,6 +52,12 @@ describe('SavedItemsList component', () => {
     });
 
     render(<SavedItemsList token={token} />);
+
+    // Embed container
+    const embedContainer = await screen.findByTestId(
+      'instagram-embed-container'
+    );
+    expect(embedContainer).toBeInTheDocument();
 
     // View action
     const viewLink = await screen.findByRole('link', { name: /View ↗/i });
@@ -113,7 +119,7 @@ describe('SavedItemsList component', () => {
     });
   });
 
-  it('renders "Source unavailable" when source_url is not canonical', async () => {
+  it('renders generic fallback when source_url is not canonical', async () => {
     vi.mocked(api.getSavedItems).mockResolvedValueOnce([
       {
         id: 'saved-cdn',
@@ -136,12 +142,53 @@ describe('SavedItemsList component', () => {
 
     render(<SavedItemsList token={token} />);
 
-    expect(
-      await screen.findByText('Source unavailable (media asset)')
-    ).toBeInTheDocument();
-    expect(screen.getByText('Source unavailable')).toBeInTheDocument();
+    expect(await screen.findByText('Preview unavailable')).toBeInTheDocument();
+    expect(screen.getByText('Open this on Instagram')).toBeInTheDocument();
     expect(
       screen.queryByRole('link', { name: /View ↗/i })
     ).not.toBeInTheDocument();
+  });
+
+  it('renders visual item with decoupled edge-to-edge media and editorial content container', async () => {
+    vi.mocked(api.getSavedItems).mockResolvedValueOnce([
+      {
+        id: 'saved-layout-test',
+        user_id: 'user-1',
+        connected_instagram_id: 'conn-1',
+        platform: 'instagram',
+        source_url: 'https://www.instagram.com/reel/Layout123/',
+        provider_item_id: 'Layout123',
+        source_event_id: 'mid_layout',
+        caption: 'Architecture design showcase',
+        creator_username: null,
+        thumbnail_url: null,
+        processing_status: 'SAVED',
+        raw_metadata: {},
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+    ]);
+
+    render(<SavedItemsList token={token} />);
+
+    const article = await screen.findByRole('article');
+    expect(article).toHaveClass('overflow-hidden');
+    expect(article).not.toHaveClass('p-4');
+
+    // Instagram embed container exists within article
+    const embedContainer = screen.getByTestId('instagram-embed-container');
+    expect(article).toContainElement(embedContainer);
+
+    // Caption exists
+    expect(
+      screen.getAllByText('Architecture design showcase').length
+    ).toBeGreaterThanOrEqual(1);
+
+    // Action bar items all exist
+    expect(screen.getByRole('link', { name: /View ↗/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /Send to me/i })
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Delete/i })).toBeInTheDocument();
   });
 });

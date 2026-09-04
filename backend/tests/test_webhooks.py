@@ -15,6 +15,12 @@ from app.integrations.instagram.client import (
 )
 from app.main import app
 from app.repositories.store import InMemoryRepository, get_repository
+from app.services.instagram_service import (
+    CONNECTION_SUCCESS_MESSAGE,
+    FROZEN_POST_REPLY_MESSAGE,
+    REEL_SAVE_CONFIRMATION_MESSAGES,
+    UNSUPPORTED_MEDIA_REPLY_MESSAGE,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -23,6 +29,7 @@ def configure_test_repo(monkeypatch: pytest.MonkeyPatch) -> InMemoryRepository:
     app.dependency_overrides[get_repository] = lambda: test_repo
     monkeypatch.setattr(settings, "INSTAGRAM_VERIFY_TOKEN", "test_verify_token_123")
     monkeypatch.setattr(settings, "INSTAGRAM_APP_SECRET", "test_secret_xyz")
+    monkeypatch.setattr(settings, "INSTAGRAM_POST_CAPTURE_ENABLED", False)
     return test_repo
 
 
@@ -148,11 +155,13 @@ async def test_webhook_pairing_handshake_flow(
         assert data["results"][0]["action"] == "connected"
         assert data["results"][0]["confirmation_dm_sent"] is True
 
-        # Verify confirmation DM was attempted
         mock_client.send_text_message.assert_called_once()
         assert mock_client.send_text_message.call_args[1]["recipient_id"] == sender_id
+        assert (
+            mock_client.send_text_message.call_args[1]["text"]
+            == CONNECTION_SUCCESS_MESSAGE
+        )
 
-        # Verify user now has active connected account
         connections = configure_test_repo.get_user_connections(user_id)
         assert len(connections) == 1
         assert connections[0].instagram_scoped_id == sender_id
@@ -172,7 +181,6 @@ async def test_webhook_pairing_handshake_messaging_failure_retains_connection(
     pending = svc.create_pending_connection(user_id)
     pairing_code = pending.connection_code
 
-    # Mock client throws error on send
     mock_client = MagicMock(spec=InstagramClient)
     mock_client.send_text_message.side_effect = InstagramClientError(
         "Rate limit exceeded"
@@ -218,7 +226,6 @@ async def test_webhook_pairing_handshake_messaging_failure_retains_connection(
         assert data["results"][0]["action"] == "connected"
         assert data["results"][0]["confirmation_dm_sent"] is False
 
-        # Connection MUST remain persisted and active
         connections = configure_test_repo.get_user_connections(user_id)
         assert len(connections) == 1
         assert connections[0].instagram_scoped_id == sender_id
@@ -228,23 +235,24 @@ async def test_webhook_pairing_handshake_messaging_failure_retains_connection(
 
 
 @pytest.mark.asyncio
-async def test_webhook_reel_share_and_idempotency(
+async def test_webhook_reel_share_and_idempotency_when_post_capture_disabled(
     configure_test_repo: InMemoryRepository,
 ) -> None:
-    """A.
-
-    Existing ig_reel fixture continues to produce exactly the same
-    SavedItem/source_url.
+    """Reel capture remains 100% functional even when
+    INSTAGRAM_POST_CAPTURE_ENABLED=False.
     """
     user_id = uuid4()
     sender_id = "ig_sender_777"
 
-    # Pre-connect user account
     configure_test_repo.upsert_connected_instagram(
         user_id=user_id,
         instagram_scoped_id=sender_id,
         display_username="alice_ig",
     )
+
+    mock_client = MagicMock(spec=InstagramClient)
+    mock_client.send_text_message.return_value = {"status": "ok"}
+    app.dependency_overrides[get_instagram_client] = lambda: mock_client
 
     reel_url = "https://www.instagram.com/reel/C3abc123XYZ/"
     message_id = "mid_reel_event_999"
@@ -264,7 +272,7 @@ async def test_webhook_reel_share_and_idempotency(
                             "mid": message_id,
                             "attachments": [
                                 {
-                                    "type": "share",
+                                    "type": "ig_reel",
                                     "payload": {
                                         "url": reel_url,
                                         "title": "Amazing pasta recipe!",
@@ -281,57 +289,75 @@ async def test_webhook_reel_share_and_idempotency(
     body = json.dumps(payload).encode("utf-8")
     sig = sign_payload(body)
 
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        # First delivery -> Creates SavedItem
-        res1 = await client.post(
-            "/api/v1/webhooks/instagram",
-            content=body,
-            headers={"X-Hub-Signature-256": sig},
-        )
-        assert res1.status_code == 200
-        assert res1.json()["results"][0]["action"] == "saved"
-        assert res1.json()["results"][0]["is_new"] is True
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            # First delivery -> Creates SavedItem & sends confirmation DM
+            res1 = await client.post(
+                "/api/v1/webhooks/instagram",
+                content=body,
+                headers={"X-Hub-Signature-256": sig},
+            )
+            assert res1.status_code == 200
+            assert res1.json()["results"][0]["action"] == "saved"
+            assert res1.json()["results"][0]["is_new"] is True
+            assert res1.json()["results"][0]["confirmation_dm_sent"] is True
 
-        # Second delivery (exact retry from Meta) -> Idempotently ignored
-        res2 = await client.post(
-            "/api/v1/webhooks/instagram",
-            content=body,
-            headers={"X-Hub-Signature-256": sig},
-        )
-        assert res2.status_code == 200
-        assert res2.json()["results"][0]["action"] == "duplicate_ignored"
-        assert res2.json()["results"][0]["is_new"] is False
+            mock_client.send_text_message.assert_called_once()
+            call_args = mock_client.send_text_message.call_args[1]
+            assert call_args["recipient_id"] == sender_id
+            assert call_args["text"] in REEL_SAVE_CONFIRMATION_MESSAGES
 
-    # Check that exactly 1 SavedItem exists
-    items = configure_test_repo.get_saved_items_for_user(user_id)
-    assert len(items) == 1
-    assert items[0].source_url == reel_url
-    assert items[0].caption == "Amazing pasta recipe!"
-    assert items[0].provider_item_id == "C3abc123XYZ"
-    assert items[0].source_event_id == message_id
-    assert items[0].processing_status == "SAVED"
+            # Second delivery -> Idempotently ignored (NO duplicate DM)
+            mock_client.send_text_message.reset_mock()
+            res2 = await client.post(
+                "/api/v1/webhooks/instagram",
+                content=body,
+                headers={"X-Hub-Signature-256": sig},
+            )
+            assert res2.status_code == 200
+            assert res2.json()["results"][0]["action"] == "duplicate_ignored"
+            assert res2.json()["results"][0]["is_new"] is False
+            assert res2.json()["results"][0]["confirmation_dm_sent"] is False
+            mock_client.send_text_message.assert_not_called()
+
+        # Check that exactly 1 SavedItem exists
+        items = configure_test_repo.get_saved_items_for_user(user_id)
+        assert len(items) == 1
+        assert items[0].source_url == reel_url
+        assert items[0].caption == "Amazing pasta recipe!"
+        assert items[0].provider_item_id == "C3abc123XYZ"
+        assert items[0].source_event_id == message_id
+        assert items[0].processing_status == "SAVED"
+    finally:
+        app.dependency_overrides.pop(get_instagram_client, None)
 
 
 @pytest.mark.asyncio
-async def test_webhook_static_post_canonical_url(
+async def test_webhook_frozen_post_sends_friendly_reply_and_does_not_save(
     configure_test_repo: InMemoryRepository,
 ) -> None:
-    """B & C.
+    """When INSTAGRAM_POST_CAPTURE_ENABLED=False and an ig_post or /p/ URL is sent:
 
-    Static/image post produces a SavedItem with canonical source_url.
+    - Post does NOT create SavedItem
+    - Sends friendly frozen post reply DM
+    - Duplicate delivery does NOT resend reply.
     """
     user_id = uuid4()
-    sender_id = "ig_sender_888"
+    sender_id = "ig_sender_frozen"
 
     configure_test_repo.upsert_connected_instagram(
         user_id=user_id,
         instagram_scoped_id=sender_id,
-        display_username="bob_ig",
+        display_username="frozen_user",
     )
 
+    mock_client = MagicMock(spec=InstagramClient)
+    mock_client.send_text_message.return_value = {"status": "ok"}
+    app.dependency_overrides[get_instagram_client] = lambda: mock_client
+
+    message_id = "mid_static_post_frozen_1"
     post_url = "https://www.instagram.com/p/C987654321/"
-    message_id = "mid_post_event_888"
 
     payload = {
         "object": "instagram",
@@ -351,7 +377,190 @@ async def test_webhook_static_post_canonical_url(
                                     "type": "share",
                                     "payload": {
                                         "url": post_url,
-                                        "title": "Sunset in Santorini",
+                                        "title": "Photo of sunset",
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+
+    body = json.dumps(payload).encode("utf-8")
+    sig = sign_payload(body)
+
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            # First delivery
+            res1 = await client.post(
+                "/api/v1/webhooks/instagram",
+                content=body,
+                headers={"X-Hub-Signature-256": sig},
+            )
+            assert res1.status_code == 200
+            data1 = res1.json()
+            assert data1["results"][0]["action"] == "ignored_post_capture_disabled"
+            assert data1["results"][0]["reply_sent"] is True
+
+            # Friendly frozen post reply was sent
+            mock_client.send_text_message.assert_called_once()
+            call_args = mock_client.send_text_message.call_args[1]
+            assert call_args["recipient_id"] == sender_id
+            assert call_args["text"] == FROZEN_POST_REPLY_MESSAGE
+
+            # Second delivery (duplicate delivery from Meta)
+            mock_client.send_text_message.reset_mock()
+            res2 = await client.post(
+                "/api/v1/webhooks/instagram",
+                content=body,
+                headers={"X-Hub-Signature-256": sig},
+            )
+            assert res2.status_code == 200
+            data2 = res2.json()
+            assert data2["results"][0]["action"] == "ignored_post_capture_disabled"
+            assert data2["results"][0]["reply_sent"] is False
+            # Deduplication prevented duplicate reply
+            mock_client.send_text_message.assert_not_called()
+
+        # Confirm NO SavedItem was created
+        items = configure_test_repo.get_saved_items_for_user(user_id)
+        assert len(items) == 0
+    finally:
+        app.dependency_overrides.pop(get_instagram_client, None)
+
+
+@pytest.mark.parametrize(
+    "attachment_type",
+    ["image", "video", "audio", "file", "animated_image", "fallback"],
+)
+@pytest.mark.asyncio
+async def test_webhook_unsupported_attachments_send_generic_unsupported_reply(
+    configure_test_repo: InMemoryRepository,
+    attachment_type: str,
+) -> None:
+    """Non-Reel and non-Post attachments send the generic unsupported media reply."""
+    user_id = uuid4()
+    sender_id = f"ig_sender_{attachment_type}"
+
+    configure_test_repo.upsert_connected_instagram(
+        user_id=user_id,
+        instagram_scoped_id=sender_id,
+    )
+
+    mock_client = MagicMock(spec=InstagramClient)
+    mock_client.send_text_message.return_value = {"status": "ok"}
+    app.dependency_overrides[get_instagram_client] = lambda: mock_client
+
+    message_id = f"mid_unsupported_{attachment_type}_1"
+    payload = {
+        "object": "instagram",
+        "entry": [
+            {
+                "id": "bot_page_id",
+                "time": 1718000000,
+                "messaging": [
+                    {
+                        "sender": {"id": sender_id},
+                        "recipient": {"id": "bot_page_id"},
+                        "timestamp": 1718000000000,
+                        "message": {
+                            "mid": message_id,
+                            "attachments": [
+                                {
+                                    "type": attachment_type,
+                                    "payload": {
+                                        "url": f"https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id={attachment_type}_123",
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+
+    body = json.dumps(payload).encode("utf-8")
+    sig = sign_payload(body)
+
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            # First delivery
+            res1 = await client.post(
+                "/api/v1/webhooks/instagram",
+                content=body,
+                headers={"X-Hub-Signature-256": sig},
+            )
+            assert res1.status_code == 200
+            data1 = res1.json()
+            assert data1["results"][0]["action"] == "ignored_unsupported_media"
+            assert data1["results"][0]["reply_sent"] is True
+
+            # Generic unsupported reply was sent
+            mock_client.send_text_message.assert_called_once()
+            call_args = mock_client.send_text_message.call_args[1]
+            assert call_args["recipient_id"] == sender_id
+            assert call_args["text"] == UNSUPPORTED_MEDIA_REPLY_MESSAGE
+
+            # Second delivery -> Deduplicated (no duplicate DM)
+            mock_client.send_text_message.reset_mock()
+            res2 = await client.post(
+                "/api/v1/webhooks/instagram",
+                content=body,
+                headers={"X-Hub-Signature-256": sig},
+            )
+            assert res2.status_code == 200
+            data2 = res2.json()
+            assert data2["results"][0]["action"] == "ignored_unsupported_media"
+            assert data2["results"][0]["reply_sent"] is False
+            mock_client.send_text_message.assert_not_called()
+
+        items = configure_test_repo.get_saved_items_for_user(user_id)
+        assert len(items) == 0
+    finally:
+        app.dependency_overrides.pop(get_instagram_client, None)
+
+
+@pytest.mark.asyncio
+async def test_webhook_post_capture_when_enabled(
+    configure_test_repo: InMemoryRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When INSTAGRAM_POST_CAPTURE_ENABLED=True, existing Post capture code runs."""
+    monkeypatch.setattr(settings, "INSTAGRAM_POST_CAPTURE_ENABLED", True)
+
+    user_id = uuid4()
+    sender_id = "ig_sender_enabled"
+
+    configure_test_repo.upsert_connected_instagram(
+        user_id=user_id,
+        instagram_scoped_id=sender_id,
+    )
+
+    post_url = "https://www.instagram.com/p/C_EnabledPost123/"
+    payload = {
+        "object": "instagram",
+        "entry": [
+            {
+                "id": "bot_page_id",
+                "time": 1718000000,
+                "messaging": [
+                    {
+                        "sender": {"id": sender_id},
+                        "recipient": {"id": "bot_page_id"},
+                        "timestamp": 1718000000000,
+                        "message": {
+                            "mid": "mid_enabled_post_1",
+                            "attachments": [
+                                {
+                                    "type": "share",
+                                    "payload": {
+                                        "url": post_url,
+                                        "title": "Summer Vibe",
                                     },
                                 }
                             ],
@@ -378,30 +587,24 @@ async def test_webhook_static_post_canonical_url(
     items = configure_test_repo.get_saved_items_for_user(user_id)
     assert len(items) == 1
     assert items[0].source_url == post_url
-    assert items[0].provider_item_id == "C987654321"
-    assert items[0].caption == "Sunset in Santorini"
+    assert items[0].provider_item_id == "C_EnabledPost123"
 
 
 @pytest.mark.asyncio
-async def test_webhook_static_post_cdn_asset(
+async def test_webhook_plain_text_message(
     configure_test_repo: InMemoryRepository,
 ) -> None:
-    """B & D.
-
-    Static/image post with CDN asset produces SavedItem without storing CDN as
-    source_url.
-    """
+    """Plain text messages without Reel/Post URLs are gracefully ignored without DM."""
     user_id = uuid4()
-    sender_id = "ig_sender_999"
+    sender_id = "ig_sender_plain_text"
 
     configure_test_repo.upsert_connected_instagram(
         user_id=user_id,
         instagram_scoped_id=sender_id,
-        display_username="charlie_ig",
     )
 
-    message_id = "mid_image_event_999"
-    cdn_url = "https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id=asset_999"
+    mock_client = MagicMock(spec=InstagramClient)
+    app.dependency_overrides[get_instagram_client] = lambda: mock_client
 
     payload = {
         "object": "instagram",
@@ -415,16 +618,8 @@ async def test_webhook_static_post_cdn_asset(
                         "recipient": {"id": "bot_page_id"},
                         "timestamp": 1718000000000,
                         "message": {
-                            "mid": message_id,
-                            "attachments": [
-                                {
-                                    "type": "image",
-                                    "payload": {
-                                        "id": "asset_999",
-                                        "url": cdn_url,
-                                    },
-                                }
-                            ],
+                            "mid": "mid_hello_1",
+                            "text": "Hello there!",
                         },
                     }
                 ],
@@ -435,23 +630,21 @@ async def test_webhook_static_post_cdn_asset(
     body = json.dumps(payload).encode("utf-8")
     sig = sign_payload(body)
 
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        res = await client.post(
-            "/api/v1/webhooks/instagram",
-            content=body,
-            headers={"X-Hub-Signature-256": sig},
-        )
-        assert res.status_code == 200
-        assert res.json()["results"][0]["action"] == "saved"
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            res = await client.post(
+                "/api/v1/webhooks/instagram",
+                content=body,
+                headers={"X-Hub-Signature-256": sig},
+            )
+            assert res.status_code == 200
+            assert res.json()["results"][0]["action"] == "ignored_no_canonical_media"
 
-    items = configure_test_repo.get_saved_items_for_user(user_id)
-    assert len(items) == 1
-    # CDN URL is never stored as canonical source_url
-    assert items[0].source_url == ""
-    assert items[0].provider_item_id == "asset_999"
-    # Raw metadata preserves the full payload with the CDN url
-    assert items[0].raw_metadata is not None
+        mock_client.send_text_message.assert_not_called()
+        assert len(configure_test_repo.get_saved_items_for_user(user_id)) == 0
+    finally:
+        app.dependency_overrides.pop(get_instagram_client, None)
 
 
 @pytest.mark.asyncio

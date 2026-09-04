@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import logoImg from '@/assets/logo.png';
+import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/Input';
 import { useAuth } from '@/features/auth/useAuth';
 
 export function LoginPage() {
@@ -32,79 +35,82 @@ export function LoginPage() {
   };
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center p-6 bg-slate-950 text-slate-100">
-      <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900/70 p-8 shadow-2xl backdrop-blur-xl">
-        <div className="text-center mb-6">
-          <h1 className="text-2xl font-bold tracking-tight text-white">
-            Sign in to OurApp
+    <main className="flex min-h-screen flex-col items-center justify-center p-6 bg-surface-bg text-text-main">
+      <div className="w-full max-w-md rounded-md border border-border-subtle bg-surface-panel p-8 sm:p-10 shadow-xs space-y-6">
+        <div className="text-center space-y-2">
+          <img
+            src={logoImg}
+            alt="SaveThisForMe logo"
+            className="mx-auto h-9 w-9 rounded-md object-contain"
+            data-testid="brand-logo"
+          />
+          <h1 className="font-serif text-2xl font-normal text-text-main tracking-tight sm:text-3xl">
+            SaveThisForMe
           </h1>
-          <p className="mt-2 text-sm text-slate-400">
-            Access your personal memory layer
+          <p className="text-xs text-text-muted">
+            Sign in to access your personal visual archive
           </p>
         </div>
 
         {error && (
           <div
             role="alert"
-            className="mb-4 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-400"
+            className="rounded-sm border border-status-danger/20 bg-status-danger-bg p-3 text-xs text-status-danger"
           >
             {error}
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label
-              htmlFor="email"
-              className="block text-xs font-medium text-slate-300"
-            >
-              Email address
-            </label>
-            <input
-              id="email"
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-800/80 px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-              placeholder="you@example.com"
-            />
-          </div>
+        <form onSubmit={handleSubmit} className="space-y-4 pt-1">
+          <Input
+            id="email"
+            type="email"
+            label="Email address"
+            autoComplete="email"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="you@example.com"
+          />
 
-          <div>
-            <label
-              htmlFor="password"
-              className="block text-xs font-medium text-slate-300"
-            >
-              Password
-            </label>
-            <input
-              id="password"
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-800/80 px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-              placeholder="••••••••"
-            />
-          </div>
+          <Input
+            id="password"
+            type="password"
+            label="Password"
+            labelRight={
+              <Link
+                to="/forgot-password"
+                className="text-[11px] text-text-muted hover:text-text-main underline transition"
+              >
+                Forgot password?
+              </Link>
+            }
+            autoComplete="current-password"
+            required
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="••••••••"
+          />
 
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="w-full rounded-lg bg-emerald-500 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:ring-offset-2 focus:ring-offset-slate-900 disabled:opacity-50"
-          >
-            {isSubmitting ? 'Signing in...' : 'Sign in'}
-          </button>
+          <div className="pt-2">
+            <Button
+              type="submit"
+              variant="primary"
+              loading={isSubmitting}
+              className="w-full py-2.5 text-xs font-semibold"
+            >
+              Sign in
+            </Button>
+          </div>
         </form>
 
-        <p className="mt-6 text-center text-xs text-slate-400">
+        <p className="text-center text-xs text-text-subtle pt-2 border-t border-border-subtle/50">
           Don&apos;t have an account?{' '}
           <Link
             to="/signup"
-            className="font-medium text-emerald-400 hover:text-emerald-300 underline"
+            className="font-medium text-text-main underline hover:opacity-80 transition"
           >
-            Sign up
+            Create account
           </Link>
         </p>
       </div>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Button } from '@/components/ui/Button';
 import {
   type ConnectedInstagramRead,
   type PendingConnectionRead,
@@ -17,6 +18,7 @@ export function ConnectedAccounts({ token }: ConnectedAccountsProps) {
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const loadConnections = useCallback(async () => {
     if (!token) return;
@@ -45,6 +47,7 @@ export function ConnectedAccounts({ token }: ConnectedAccountsProps) {
     try {
       const pendingData = await createPendingInstagramConnection(token);
       setPending(pendingData);
+      setCopied(false);
     } catch (err: unknown) {
       setError(
         err instanceof Error ? err.message : 'Failed to start connection'
@@ -68,142 +71,195 @@ export function ConnectedAccounts({ token }: ConnectedAccountsProps) {
     }
   };
 
+  const handleCopyCode = async (code: string) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(code.trim());
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = code.trim();
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  };
+
   return (
-    <section className="rounded-2xl border border-stone-800/80 bg-stone-900/60 p-6 backdrop-blur-md">
-      <div className="flex items-center justify-between mb-4">
+    <section className="rounded-md border border-border-subtle bg-surface-panel p-4 sm:p-6 space-y-4">
+      <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-medium tracking-tight text-stone-100">
-            Instagram Connection
+          <h2 className="text-sm font-semibold tracking-tight text-text-main">
+            Accounts
           </h2>
-          <p className="text-xs text-stone-400 mt-0.5">
-            Connect your Instagram account to save Reels by sending DMs to{' '}
-            <span className="text-stone-200 font-mono">@save.this.for.me</span>
+          <p className="text-xs text-text-muted mt-0.5">
+            Connect Instagram to save Reels by sending DMs to{' '}
+            <span className="font-mono text-text-main">@save.this.for.me</span>
           </p>
         </div>
-        <button
+        <Button
+          variant="subtle"
+          size="sm"
           onClick={loadConnections}
-          disabled={loading || actionLoading}
-          className="text-xs text-stone-400 hover:text-stone-200 underline transition disabled:opacity-50"
+          loading={loading || actionLoading}
+          className="text-xs"
         >
           Refresh
-        </button>
+        </Button>
       </div>
 
       {error && (
         <div
           role="alert"
-          className="mb-4 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300"
+          className="rounded-sm border border-status-danger/25 bg-status-danger-bg p-3 text-xs text-status-danger"
         >
           {error}
         </div>
       )}
 
-      {loading ? (
-        <div className="py-6 text-center text-xs text-stone-500">
-          Checking connected accounts...
+      {loading && connections.length === 0 ? (
+        <div className="py-4 text-center text-xs text-text-subtle">
+          Checking account connections...
         </div>
       ) : connections.length > 0 ? (
         <div className="space-y-3">
           {connections.map((conn) => (
             <div
               key={conn.id}
-              className="flex items-center justify-between rounded-xl border border-stone-800 bg-stone-950/70 p-4"
+              className="flex items-center justify-between rounded-sm border border-border-subtle bg-surface-subtle/40 px-4 py-3"
             >
-              <div className="space-y-1">
+              <div className="space-y-0.5 min-w-0 pr-3">
                 <div className="flex items-center space-x-2">
-                  <span className="inline-block h-2 w-2 rounded-full bg-emerald-400" />
-                  <span className="text-xs font-semibold text-stone-200">
-                    {conn.display_username
-                      ? `@${conn.display_username}`
-                      : 'Instagram Account Connected'}
-                  </span>
-                  <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400 border border-emerald-500/20">
-                    Active
+                  <span className="h-1.5 w-1.5 rounded-full bg-status-active shrink-0" />
+                  <span className="text-[11px] font-medium uppercase tracking-wider text-text-muted">
+                    Instagram
                   </span>
                 </div>
-                <p className="text-[11px] font-mono text-stone-500">
-                  ID: {conn.instagram_scoped_id}
-                </p>
+                <div
+                  className="text-xs font-semibold text-text-main font-mono truncate max-w-[200px] sm:max-w-xs"
+                  title={
+                    conn.display_username
+                      ? `@${conn.display_username}`
+                      : undefined
+                  }
+                >
+                  {conn.display_username
+                    ? `@${conn.display_username}`
+                    : conn.instagram_scoped_id
+                      ? `Instagram (••••${conn.instagram_scoped_id.slice(-4)})`
+                      : 'Instagram account'}
+                </div>
               </div>
 
-              <button
+              <Button
+                variant="subtle"
+                size="sm"
                 onClick={() => handleDisconnect(conn.id)}
                 disabled={actionLoading}
-                className="rounded-lg border border-stone-700 bg-stone-800/80 px-3 py-1.5 text-xs font-medium text-stone-300 hover:bg-rose-900/30 hover:border-rose-700/50 hover:text-rose-300 transition disabled:opacity-50"
+                aria-label={`Disconnect ${
+                  conn.display_username
+                    ? `@${conn.display_username}`
+                    : 'Instagram account'
+                }`}
+                className="text-xs text-text-subtle hover:text-status-danger shrink-0"
               >
                 Disconnect
-              </button>
+              </Button>
             </div>
           ))}
 
-          <div className="pt-2">
-            <button
+          <div className="pt-1">
+            <Button
+              variant="subtle"
+              size="sm"
               onClick={handleStartConnect}
               disabled={actionLoading}
-              className="text-xs font-medium text-emerald-400 hover:text-emerald-300 transition"
+              className="text-xs text-text-muted hover:text-text-main"
             >
               + Connect another Instagram account
-            </button>
+            </Button>
           </div>
         </div>
       ) : (
-        <div className="rounded-xl border border-stone-800/60 bg-stone-950/40 p-6 text-center">
-          <p className="text-xs text-stone-400 mb-4">
-            No Instagram account is currently linked. Connect to start saving
-            Reels.
+        <div className="rounded-sm border border-border-subtle bg-surface-subtle/20 p-6 text-center space-y-3">
+          <p className="text-xs text-text-muted max-w-sm mx-auto">
+            No Instagram account is linked yet. Connect to start saving Reels.
           </p>
-          <button
+          <Button
+            variant="primary"
+            size="sm"
             onClick={handleStartConnect}
-            disabled={actionLoading}
-            className="rounded-lg bg-stone-100 px-4 py-2 text-xs font-medium text-stone-900 hover:bg-white transition disabled:opacity-50"
+            loading={actionLoading}
           >
-            {actionLoading ? 'Generating code...' : 'Connect Instagram'}
-          </button>
+            Connect Instagram
+          </Button>
         </div>
       )}
 
-      {/* Pairing Modal / Drawer */}
+      {/* Pairing Box */}
       {pending && (
-        <div className="mt-6 rounded-xl border border-emerald-500/30 bg-emerald-950/20 p-5">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">
+        <div className="mt-4 rounded-md border border-border-base bg-surface-subtle/60 p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium tracking-wide text-text-main">
               Pairing Instructions
             </span>
-            <button
+            <Button
+              variant="subtle"
+              size="sm"
               onClick={() => setPending(null)}
-              className="text-xs text-stone-400 hover:text-stone-200"
+              className="h-6 w-6 p-0 text-text-subtle"
             >
-              Dismiss
-            </button>
+              ✕
+            </Button>
           </div>
 
-          <p className="text-xs text-stone-300 mb-3">
-            Send the pairing code below in a direct message (DM) to{' '}
-            <strong className="text-white">@{pending.bot_username}</strong>:
+          <p className="text-xs font-medium text-text-main">Almost there ♡</p>
+          <p className="text-xs text-text-muted">
+            Send this message to{' '}
+            <strong className="text-text-main font-mono">
+              @{pending.bot_username}
+            </strong>
+            :
           </p>
 
-          <div className="flex items-center justify-between rounded-lg bg-stone-950 border border-stone-800 p-3 mb-4 font-mono text-sm text-emerald-400 font-bold tracking-wider">
+          <div className="flex items-center justify-between rounded-sm border border-border-base bg-surface-panel p-3 font-mono text-sm font-bold text-text-main">
             <span>{pending.connection_code}</span>
-            <span className="text-[10px] font-sans font-normal text-stone-500">
-              Expires in 15m
-            </span>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => handleCopyCode(pending.connection_code)}
+              className="ml-3"
+            >
+              {copied ? 'Copied ♡' : 'Copy'}
+            </Button>
           </div>
 
-          <div className="flex items-center space-x-3">
+          <p className="text-[10px] text-text-subtle">Expires in 15m</p>
+
+          <div className="flex flex-wrap items-center gap-2.5 pt-1">
             <a
               href={pending.dm_link}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center rounded-lg bg-emerald-500 px-3.5 py-1.5 text-xs font-semibold text-stone-950 hover:bg-emerald-400 transition"
+              className="inline-flex items-center rounded-sm bg-action-primary-bg px-3.5 py-1.5 text-xs font-semibold text-action-primary-text hover:bg-action-primary-hover transition"
             >
               Open Instagram DM ↗
             </a>
-            <button
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={loadConnections}
-              className="rounded-lg border border-stone-700 bg-stone-800/80 px-3 py-1.5 text-xs font-medium text-stone-300 hover:bg-stone-700 transition"
+              className="text-xs"
             >
-              I Sent It (Check Status)
-            </button>
+              I sent it — Check Status
+            </Button>
           </div>
         </div>
       )}

@@ -1,21 +1,18 @@
 import { useCallback, useEffect, useState } from 'react';
+import { InstagramEmbed } from '@/components/embeds/InstagramEmbed';
+import { Button } from '@/components/ui/Button';
+import { ErrorState } from '@/components/ui/ErrorState';
+import { Skeleton } from '@/components/ui/Skeleton';
 import {
   type SavedItemRead,
   deleteSavedItem,
   getSavedItems,
   sendSavedItemToMe,
 } from '@/lib/api';
+import { isCanonicalInstagramUrl } from '@/lib/instagram';
 
 interface SavedItemsListProps {
   token: string | null;
-}
-
-const CANONICAL_IG_REGEX =
-  /^https?:\/\/(?:www\.)?instagram\.com\/(?:reel|reels|p|tv)\/[A-Za-z0-9_-]+/i;
-
-function isCanonicalInstagramUrl(url: string | null | undefined): boolean {
-  if (!url) return false;
-  return CANONICAL_IG_REGEX.test(url);
 }
 
 export function SavedItemsList({ token }: SavedItemsListProps) {
@@ -83,45 +80,58 @@ export function SavedItemsList({ token }: SavedItemsListProps) {
         err instanceof Error ? err.message : 'Failed to send item to Instagram'
       );
     } finally {
-      setSendingId(false as unknown as null);
+      setSendingId(null);
     }
   };
 
   return (
-    <section className="rounded-2xl border border-stone-800/80 bg-stone-900/60 p-6 backdrop-blur-md">
-      <div className="flex items-center justify-between mb-4">
+    <section className="space-y-6 max-w-2xl mx-auto w-full">
+      {/* Library Header */}
+      <div className="flex items-baseline justify-between border-b border-border-subtle pb-4">
         <div>
-          <h2 className="text-lg font-medium tracking-tight text-stone-100">
-            Captured Reels
+          <h2 className="font-serif text-2xl font-normal tracking-tight text-text-main sm:text-3xl">
+            Saved Library
           </h2>
-          <p className="text-xs text-stone-400 mt-0.5">
-            Durable source archive of Reels sent via DM to SaveThisForMe
+          <p className="mt-1 text-xs text-text-muted">
+            {items.length > 0
+              ? `${items.length} ${items.length === 1 ? 'thing' : 'things'} you've kept`
+              : 'The things you didn\u2019t want to lose.'}
           </p>
         </div>
-        <button
+        <Button
+          variant="subtle"
+          size="sm"
           onClick={loadItems}
-          disabled={loading}
-          className="text-xs text-stone-400 hover:text-stone-200 underline transition disabled:opacity-50"
+          loading={loading}
+          className="text-xs text-text-muted hover:text-text-main"
         >
           Refresh
-        </button>
+        </Button>
       </div>
 
       {error && (
-        <div
-          role="alert"
-          className="mb-4 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300"
-        >
-          {error}
-        </div>
+        <ErrorState
+          title="Couldn't load your library"
+          description={error}
+          onRetry={loadItems}
+        />
       )}
 
-      {loading ? (
-        <div className="py-8 text-center text-xs text-stone-500">
-          Loading your captured items...
+      {loading && items.length === 0 ? (
+        <div className="space-y-6">
+          <div className="rounded-md border border-border-subtle bg-surface-panel p-6 space-y-4">
+            <Skeleton className="h-80 w-full rounded-md" />
+            <Skeleton className="h-4 w-3/4" />
+            <Skeleton className="h-3 w-1/3" />
+          </div>
+          <div className="rounded-md border border-border-subtle bg-surface-panel p-6 space-y-4">
+            <Skeleton className="h-80 w-full rounded-md" />
+            <Skeleton className="h-4 w-2/3" />
+            <Skeleton className="h-3 w-1/4" />
+          </div>
         </div>
       ) : items.length > 0 ? (
-        <div className="divide-y divide-stone-800/60">
+        <div className="space-y-8">
           {items.map((item) => {
             const hasCanonicalUrl = isCanonicalInstagramUrl(item.source_url);
             const isDeleting = deletingId === item.id;
@@ -129,90 +139,186 @@ export function SavedItemsList({ token }: SavedItemsListProps) {
             const feedbackText = sentFeedback[item.id];
             const isConfirming = confirmDeleteId === item.id;
 
-            return (
-              <article key={item.id} className="py-4 first:pt-0 last:pb-0">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="space-y-1 max-w-[70%]">
-                    {hasCanonicalUrl ? (
-                      <span className="text-xs font-semibold text-stone-200 line-clamp-1">
-                        {item.caption || 'Instagram Reel'}
-                      </span>
-                    ) : (
-                      <span className="text-xs text-stone-400 italic">
-                        Source unavailable (media asset)
-                      </span>
-                    )}
+            // Presentation A: Visual Items (with canonical URL & embed)
+            if (hasCanonicalUrl) {
+              return (
+                <article
+                  key={item.id}
+                  className="overflow-hidden rounded-md border border-border-subtle bg-surface-panel transition hover:border-border-base"
+                >
+                  {/* 1. Media Preview (edge-to-edge within card) */}
+                  <InstagramEmbed
+                    url={item.source_url}
+                    caption={item.caption}
+                  />
 
-                    {item.caption && hasCanonicalUrl && (
-                      <p className="text-xs text-stone-400 line-clamp-2">
+                  {/* 2. Content Container with comfortable editorial padding */}
+                  <div className="px-4 pb-4 pt-1 sm:px-6 sm:pb-6 space-y-3">
+                    {/* Caption */}
+                    {item.caption && (
+                      <p className="text-xs leading-relaxed text-text-main sm:text-sm">
                         {item.caption}
                       </p>
                     )}
 
-                    <div className="flex items-center space-x-3 text-[10px] text-stone-500 pt-1">
-                      <span className="capitalize">{item.platform}</span>
+                    {/* Metadata */}
+                    <div className="flex items-center space-x-2 text-[11px] text-text-subtle font-mono">
+                      <span className="capitalize text-text-muted">
+                        {item.platform}
+                      </span>
                       <span>•</span>
-                      <span>{new Date(item.created_at).toLocaleString()}</span>
+                      <time dateTime={item.created_at}>
+                        {new Date(item.created_at).toLocaleDateString(
+                          undefined,
+                          {
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric',
+                          }
+                        )}
+                      </time>
+                    </div>
+
+                    {/* Action Bar */}
+                    <div className="flex flex-wrap items-center justify-between gap-2.5 border-t border-border-subtle/50 pt-3">
+                      <div className="flex items-center space-x-3">
+                        <a
+                          href={item.source_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center text-xs font-medium text-text-main hover:text-text-muted transition"
+                        >
+                          View ↗
+                        </a>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => handleSendToMe(item.id)}
+                          disabled={isSending}
+                          className="text-xs"
+                        >
+                          {isSending
+                            ? 'Sending...'
+                            : feedbackText || 'Send to me'}
+                        </Button>
+                      </div>
+
+                      <div>
+                        {isConfirming ? (
+                          <div className="flex items-center space-x-1.5">
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              onClick={() => handleDelete(item.id)}
+                              loading={isDeleting}
+                            >
+                              Confirm
+                            </Button>
+                            <Button
+                              variant="subtle"
+                              size="sm"
+                              onClick={() => setConfirmDeleteId(null)}
+                              disabled={isDeleting}
+                              aria-label="Cancel deletion"
+                            >
+                              ✕
+                            </Button>
+                          </div>
+                        ) : (
+                          <Button
+                            variant="subtle"
+                            size="sm"
+                            onClick={() => setConfirmDeleteId(item.id)}
+                            disabled={isDeleting}
+                            className="text-text-subtle hover:text-status-danger text-xs hover:bg-status-danger-bg/30 transition"
+                            aria-label="Delete saved item"
+                          >
+                            Delete
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   </div>
+                </article>
+              );
+            }
 
-                  {/* Actions Area */}
-                  <div className="flex items-center space-x-2 shrink-0">
-                    {/* View Action */}
-                    {hasCanonicalUrl ? (
-                      <a
-                        href={item.source_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="rounded-lg border border-stone-700 bg-stone-800/80 px-2.5 py-1 text-xs font-medium text-stone-300 hover:bg-stone-700 hover:text-white transition"
-                      >
-                        View ↗
-                      </a>
-                    ) : (
-                      <span className="px-2 py-1 text-[11px] text-stone-500 select-none">
-                        Source unavailable
-                      </span>
-                    )}
+            // Presentation B: Fallback / Text-Only Items (compact editorial, no large empty media box)
+            return (
+              <article
+                key={item.id}
+                className="rounded-md border border-border-subtle bg-surface-panel p-4 sm:p-6 transition hover:border-border-base space-y-3"
+              >
+                <div className="flex items-center space-x-2 text-[11px] text-text-subtle font-mono">
+                  <span className="capitalize text-text-muted">
+                    {item.platform}
+                  </span>
+                  <span>•</span>
+                  <time dateTime={item.created_at}>
+                    {new Date(item.created_at).toLocaleDateString(undefined, {
+                      month: 'short',
+                      day: 'numeric',
+                      year: 'numeric',
+                    })}
+                  </time>
+                </div>
 
-                    {/* Send to me Action */}
-                    {hasCanonicalUrl && (
-                      <button
-                        onClick={() => handleSendToMe(item.id)}
-                        disabled={isSending}
-                        className="rounded-lg border border-emerald-700/40 bg-emerald-950/30 px-2.5 py-1 text-xs font-medium text-emerald-400 hover:bg-emerald-900/40 transition disabled:opacity-50"
-                      >
-                        {isSending
-                          ? 'Sending...'
-                          : feedbackText || 'Send to me'}
-                      </button>
-                    )}
+                {item.caption ? (
+                  <p className="text-xs leading-relaxed text-text-main sm:text-sm">
+                    {item.caption}
+                  </p>
+                ) : (
+                  <p className="text-xs italic text-text-subtle">
+                    (No caption provided)
+                  </p>
+                )}
 
-                    {/* Delete Action with inline confirmation */}
+                <div className="rounded-sm border border-border-subtle bg-surface-subtle/30 px-3.5 py-2 text-xs text-text-muted flex items-center justify-between">
+                  <span>Preview unavailable</span>
+                  <span className="text-[11px] text-text-subtle">
+                    Open this on Instagram
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between border-t border-border-subtle/50 pt-3">
+                  <div className="flex items-center space-x-3">
+                    <span className="text-[11px] text-text-subtle">
+                      Source unavailable
+                    </span>
+                  </div>
+
+                  <div>
                     {isConfirming ? (
-                      <div className="flex items-center space-x-1">
-                        <button
+                      <div className="flex items-center space-x-1.5">
+                        <Button
+                          variant="danger"
+                          size="sm"
                           onClick={() => handleDelete(item.id)}
-                          disabled={isDeleting}
-                          className="rounded-lg bg-rose-600 px-2 py-1 text-xs font-semibold text-white hover:bg-rose-500 transition disabled:opacity-50"
+                          loading={isDeleting}
                         >
-                          {isDeleting ? 'Deleting...' : 'Confirm'}
-                        </button>
-                        <button
+                          Confirm
+                        </Button>
+                        <Button
+                          variant="subtle"
+                          size="sm"
                           onClick={() => setConfirmDeleteId(null)}
                           disabled={isDeleting}
-                          className="rounded-lg border border-stone-700 px-1.5 py-1 text-xs text-stone-400 hover:text-stone-200 transition"
+                          aria-label="Cancel deletion"
                         >
                           ✕
-                        </button>
+                        </Button>
                       </div>
                     ) : (
-                      <button
+                      <Button
+                        variant="subtle"
+                        size="sm"
                         onClick={() => setConfirmDeleteId(item.id)}
                         disabled={isDeleting}
-                        className="rounded-lg border border-stone-700 bg-stone-800/80 px-2.5 py-1 text-xs font-medium text-stone-400 hover:border-rose-700/50 hover:bg-rose-900/20 hover:text-rose-300 transition"
+                        className="text-text-subtle hover:text-status-danger text-xs hover:bg-status-danger-bg/30 transition"
+                        aria-label="Delete saved item"
                       >
                         Delete
-                      </button>
+                      </Button>
                     )}
                   </div>
                 </div>
@@ -221,10 +327,15 @@ export function SavedItemsList({ token }: SavedItemsListProps) {
           })}
         </div>
       ) : (
-        <div className="rounded-xl border border-stone-800/60 bg-stone-950/40 p-8 text-center">
-          <p className="text-xs text-stone-400">
-            No saved Reels yet. Connect your Instagram account and DM a Reel to{' '}
-            <span className="text-stone-300 font-mono">@save.this.for.me</span>.
+        /* Empty State: Integrated typographical composition */
+        <div className="py-20 text-center space-y-2">
+          <h3 className="font-serif text-xl font-normal text-text-main tracking-tight sm:text-2xl">
+            Nothing here yet.
+          </h3>
+          <p className="text-xs text-text-muted max-w-sm mx-auto leading-relaxed">
+            Send a Reel to{' '}
+            <span className="font-mono text-text-main">@save.this.for.me</span>{' '}
+            and it&apos;ll show up here ♡
           </p>
         </div>
       )}

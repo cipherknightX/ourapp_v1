@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     INSTAGRAM_GRAPH_API_VERSION: str = "v26.0"
     INSTAGRAM_BOT_USERNAME: str = "save.this.for.me"
 
+    # Feature Flags
+    INSTAGRAM_POST_CAPTURE_ENABLED: bool = False
+
     @property
     def database_key(self) -> str:
         """Returns the most privileged server key available for database operations."""

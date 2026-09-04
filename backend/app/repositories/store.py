@@ -212,6 +212,15 @@ class InMemoryRepository(RepositoryProtocol):
             del self._saved_items[saved_item_id]
             return True
 
+    def record_or_check_event(self, event_id: str, ttl_seconds: int = 86400) -> bool:
+        with self._lock:
+            if not hasattr(self, "_processed_event_ids"):
+                self._processed_event_ids: set[str] = set()
+            if event_id in self._processed_event_ids:
+                return False
+            self._processed_event_ids.add(event_id)
+            return True
+
 
 _default_repository: RepositoryProtocol | None = None
 

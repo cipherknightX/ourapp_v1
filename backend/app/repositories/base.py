@@ -88,3 +88,11 @@ class RepositoryProtocol(ABC):
     def delete_saved_item(self, user_id: UUID, saved_item_id: UUID) -> bool:
         """Deletes a single saved item owned by user_id. Returns True if deleted."""
         pass
+
+    @abstractmethod
+    def record_or_check_event(self, event_id: str, ttl_seconds: int = 86400) -> bool:
+        """Records an event ID.
+
+        Returns True if this is a new event, False if already seen.
+        """
+        pass

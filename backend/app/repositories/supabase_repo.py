@@ -461,3 +461,22 @@ class SupabaseRepository(RepositoryProtocol):
         response.raise_for_status()
         rows = response.json()
         return bool(rows and isinstance(rows, list))
+
+    def record_or_check_event(self, event_id: str, ttl_seconds: int = 86400) -> bool:
+        """Durable event deduplication using Redis with graceful in-memory fallback."""
+        try:
+            import redis
+
+            r = redis.Redis.from_url(
+                settings.REDIS_URL, decode_responses=True, socket_timeout=1.0
+            )
+            key = f"processed_event:{event_id}"
+            is_new = bool(r.set(key, "1", ex=ttl_seconds, nx=True))
+            return is_new
+        except Exception:
+            if not hasattr(self, "_fallback_events"):
+                self._fallback_events: set[str] = set()
+            if event_id in self._fallback_events:
+                return False
+            self._fallback_events.add(event_id)
+            return True

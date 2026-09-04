@@ -1,4 +1,5 @@
 import logging
+import random
 import re
 import secrets
 from datetime import UTC, datetime, timedelta
@@ -21,8 +22,18 @@ from app.schemas.instagram import (
 logger = logging.getLogger(__name__)
 
 # Regex for matching canonical Instagram Reel and Post URLs
-REEL_URL_REGEX = re.compile(
+CANONICAL_IG_URL_REGEX = re.compile(
     r"https?://(?:www\.)?instagram\.com/(?:reel|reels|p|tv)/([A-Za-z0-9_-]+)/?",
+    re.IGNORECASE,
+)
+
+REEL_URL_REGEX = re.compile(
+    r"https?://(?:www\.)?instagram\.com/(?:reel|reels)/([A-Za-z0-9_-]+)/?",
+    re.IGNORECASE,
+)
+
+POST_URL_REGEX = re.compile(
+    r"https?://(?:www\.)?instagram\.com/(?:p|tv)/([A-Za-z0-9_-]+)/?",
     re.IGNORECASE,
 )
 
@@ -33,12 +44,38 @@ META_CDN_HOSTS = {
     "scontent.cdninstagram.com",
 }
 
+CONNECTION_SUCCESS_MESSAGE = (
+    "You're connected ♡\nSend me a Reel here and I'll remember it for you."
+)
+
+FROZEN_POST_REPLY_MESSAGE = (
+    "Ahh, I’m still teaching myself posts 😭\n"
+    "Send me a Reel for now and I’ll save it for you ♡"
+)
+
+UNSUPPORTED_MEDIA_REPLY_MESSAGE = (
+    "Ahh, I can save Reels right now 😭\nSend me a Reel and I’ll remember it for you ♡"
+)
+
+REEL_SAVE_CONFIRMATION_MESSAGES = [
+    "Got it ♡ Saved for you.",
+    "Yep, I've got it 😌",
+    "Saved ✨",
+    "I remembered this one ♡",
+    "Got it. Tucked away safely.",
+    "Yep, that's saved 😌",
+    "Added to your collection ✨",
+    "I've got this one too ♡",
+    "Saved and tucked away.",
+    "Gotcha 😌 It's in your library.",
+]
+
 
 def is_canonical_instagram_url(url: str | None) -> bool:
     """Returns True if url is a canonical Instagram Reel, Post, or TV URL."""
     if not url:
         return False
-    return bool(REEL_URL_REGEX.search(url))
+    return bool(CANONICAL_IG_URL_REGEX.search(url))
 
 
 def is_meta_cdn_asset_url(url: str | None) -> bool:
@@ -82,7 +119,7 @@ def extract_media_from_event(
             if url and isinstance(url, str):
                 if is_canonical_instagram_url(url):
                     source_url = url
-                    match = REEL_URL_REGEX.search(url)
+                    match = CANONICAL_IG_URL_REGEX.search(url)
                     if match:
                         provider_item_id = match.group(1)
 
@@ -100,7 +137,7 @@ def extract_media_from_event(
 
     # 2. If no canonical URL in attachments, search message text
     if not source_url and event.text:
-        match = REEL_URL_REGEX.search(event.text)
+        match = CANONICAL_IG_URL_REGEX.search(event.text)
         if match:
             source_url = match.group(0)
             provider_item_id = match.group(1)
@@ -146,7 +183,13 @@ class InstagramService:
         """Processes normalized Instagram event.
 
         1. If pairing code -> activate connection and attempt confirmation DM.
-        2. If sender connected -> extract canonical reel/post & save item idempotently.
+        2. If sender connected:
+           - If Reel -> extract & save item idempotently.
+             On new save, send confirmation DM.
+           - If Post -> save if INSTAGRAM_POST_CAPTURE_ENABLED,
+             else send friendly frozen post reply DM and return 200 without saving.
+           - If other attachment -> send generic unsupported media reply DM.
+           - If plain text -> ignore gracefully without DM.
         3. Otherwise -> log safe diagnostic.
         """
         sender_id = event.sender_id
@@ -171,13 +214,9 @@ class InstagramService:
                 # Attempt connection confirmation DM (secondary; never undoes state)
                 confirmation_sent = False
                 try:
-                    confirmation_message = (
-                        "You're connected ♡\n"
-                        "Send me any Reel or post here and I'll save it for you."
-                    )
                     self._ig_client.send_text_message(
                         recipient_id=sender_id,
-                        text=confirmation_message,
+                        text=CONNECTION_SUCCESS_MESSAGE,
                     )
                     confirmation_sent = True
                     logger.info("Sent connection confirmation DM to sender")
@@ -207,7 +246,7 @@ class InstagramService:
         # 3. Extract media / reel / static post
         source_url, item_id, caption, thumb = extract_media_from_event(event)
 
-        # Ignore text messages without media or attachments
+        # Ignore plain text messages without media or attachments
         if not source_url and not event.attachments:
             logger.info(
                 "No canonical Instagram Reel/Post or attachment found in message"
@@ -218,30 +257,158 @@ class InstagramService:
                 "user_id": str(connected_account.user_id),
             }
 
-        # 4. Save item idempotently
-        saved_item, is_new = self._repo.create_saved_item_idempotent(
-            user_id=connected_account.user_id,
-            connected_instagram_id=connected_account.id,
-            platform="instagram",
-            source_url=source_url or "",
-            provider_item_id=item_id,
-            source_event_id=event.message_id,
-            caption=caption,
-            creator_username=None,
-            thumbnail_url=thumb,
-            raw_metadata=event.raw_payload,
-        )
+        # 4. Check whether content is an Instagram Reel
+        is_reel = any(
+            att.get("type") in ("ig_reel", "reel") for att in event.attachments
+        ) or bool(source_url and REEL_URL_REGEX.search(source_url))
 
-        logger.info(
-            "SavedItem %s for user %s (is_new=%s)",
-            saved_item.id,
-            connected_account.user_id,
-            is_new,
-        )
+        if is_reel:
+            # Existing Reel capture flow
+            saved_item, is_new = self._repo.create_saved_item_idempotent(
+                user_id=connected_account.user_id,
+                connected_instagram_id=connected_account.id,
+                platform="instagram",
+                source_url=source_url or "",
+                provider_item_id=item_id,
+                source_event_id=event.message_id,
+                caption=caption,
+                creator_username=None,
+                thumbnail_url=thumb,
+                raw_metadata=event.raw_payload,
+            )
+
+            logger.info(
+                "SavedItem %s (Reel) for user %s (is_new=%s)",
+                saved_item.id,
+                connected_account.user_id,
+                is_new,
+            )
+
+            confirmation_dm_sent = False
+            # Send confirmation DM ONLY when this is a newly saved item
+            if is_new:
+                try:
+                    confirmation_text = random.choice(REEL_SAVE_CONFIRMATION_MESSAGES)
+                    self._ig_client.send_text_message(
+                        recipient_id=sender_id,
+                        text=confirmation_text,
+                    )
+                    confirmation_dm_sent = True
+                    logger.info("Sent save confirmation DM for Reel to sender")
+                except InstagramClientError as exc:
+                    logger.warning("Could not send Reel save confirmation DM: %s", exc)
+                except Exception as exc:
+                    logger.warning(
+                        "Unexpected error sending Reel save confirmation DM: %s",
+                        type(exc).__name__,
+                    )
+
+            return {
+                "action": "saved" if is_new else "duplicate_ignored",
+                "saved_item_id": str(saved_item.id),
+                "is_new": is_new,
+                "user_id": str(connected_account.user_id),
+                "confirmation_dm_sent": confirmation_dm_sent,
+            }
+
+        # 5. Check whether content is an Instagram Post (/p/, /tv/, ig_post)
+        is_post = any(
+            att.get("type") in ("ig_post", "post") for att in event.attachments
+        ) or bool(source_url and POST_URL_REGEX.search(source_url))
+
+        if is_post:
+            if settings.INSTAGRAM_POST_CAPTURE_ENABLED:
+                # Existing Post capture flow when feature flag is enabled
+                saved_item, is_new = self._repo.create_saved_item_idempotent(
+                    user_id=connected_account.user_id,
+                    connected_instagram_id=connected_account.id,
+                    platform="instagram",
+                    source_url=source_url or "",
+                    provider_item_id=item_id,
+                    source_event_id=event.message_id,
+                    caption=caption,
+                    creator_username=None,
+                    thumbnail_url=thumb,
+                    raw_metadata=event.raw_payload,
+                )
+
+                logger.info(
+                    "SavedItem %s (Post) for user %s (is_new=%s)",
+                    saved_item.id,
+                    connected_account.user_id,
+                    is_new,
+                )
+
+                return {
+                    "action": "saved" if is_new else "duplicate_ignored",
+                    "saved_item_id": str(saved_item.id),
+                    "is_new": is_new,
+                    "user_id": str(connected_account.user_id),
+                }
+
+            # Post capture is temporarily frozen: send friendly frozen post reply
+            is_new_event = self._repo.record_or_check_event(event.message_id)
+            reply_sent = False
+
+            if is_new_event:
+                try:
+                    self._ig_client.send_text_message(
+                        recipient_id=sender_id,
+                        text=FROZEN_POST_REPLY_MESSAGE,
+                    )
+                    reply_sent = True
+                    sender_suffix = sender_id[-4:] if len(sender_id) >= 4 else sender_id
+                    logger.info(
+                        "Sent friendly post reply to sender ending in ...%s",
+                        sender_suffix,
+                    )
+                except InstagramClientError as exc:
+                    logger.warning(
+                        "Could not send friendly post reply to sender: %s", exc
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Unexpected error sending friendly post reply: %s",
+                        type(exc).__name__,
+                    )
+
+            return {
+                "action": "ignored_post_capture_disabled",
+                "sender_id": sender_id,
+                "user_id": str(connected_account.user_id),
+                "reply_sent": reply_sent,
+                "is_new_event": is_new_event,
+            }
+
+        # 6. Other unsupported attachments (image upload, video, audio, file, gif, etc.)
+        is_new_event = self._repo.record_or_check_event(event.message_id)
+        reply_sent = False
+
+        if is_new_event:
+            try:
+                self._ig_client.send_text_message(
+                    recipient_id=sender_id,
+                    text=UNSUPPORTED_MEDIA_REPLY_MESSAGE,
+                )
+                reply_sent = True
+                logger.info(
+                    "Sent unsupported media reply to sender ending in ...%s",
+                    sender_id[-4:] if len(sender_id) >= 4 else sender_id,
+                )
+            except InstagramClientError as exc:
+                logger.warning(
+                    "Could not send unsupported media reply to sender: %s", exc
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Unexpected error sending unsupported media reply: %s",
+                    type(exc).__name__,
+                )
 
         return {
-            "action": "saved" if is_new else "duplicate_ignored",
-            "saved_item_id": str(saved_item.id),
-            "is_new": is_new,
+            "action": "ignored_unsupported_media",
+            "sender_id": sender_id,
             "user_id": str(connected_account.user_id),
+            "reply_sent": reply_sent,
+            "is_new_event": is_new_event,
         }

@@ -5,36 +5,38 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { useAuth } from '@/features/auth/useAuth';
 
-export function SignupPage() {
+export function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
 
-  const { signUp } = useAuth();
+  const { resetPasswordForEmail } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    if (password !== confirmPassword) {
-      setError('Passwords do not match');
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      setError('Please enter your email address');
       return;
     }
 
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters');
+    // Basic email format check
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      setError('Please enter a valid email address');
       return;
     }
 
     setIsSubmitting(true);
-    const { error: signUpError } = await signUp(email, password);
+    const { error: resetError } = await resetPasswordForEmail(trimmedEmail);
     setIsSubmitting(false);
 
-    if (signUpError) {
-      setError(signUpError.message);
+    if (resetError) {
+      setError(
+        resetError.message || 'Failed to send reset link. Please try again.'
+      );
     } else {
       setIsSuccess(true);
     }
@@ -54,7 +56,9 @@ export function SignupPage() {
             SaveThisForMe
           </h1>
           <p className="text-xs text-text-muted">
-            Create your personal visual archive
+            {isSuccess
+              ? 'Password reset link sent'
+              : 'Forgot your password? No worries. Enter your email and I\u2019ll send you a reset link.'}
           </p>
         </div>
 
@@ -68,52 +72,34 @@ export function SignupPage() {
         )}
 
         {isSuccess ? (
-          <div className="rounded-sm border border-border-subtle bg-surface-subtle/50 p-6 text-center space-y-3">
+          <div className="rounded-sm border border-border-subtle bg-surface-subtle/50 p-6 text-center space-y-4">
             <h2 className="text-sm font-medium text-text-main">
-              Check your inbox
+              Check your email
             </h2>
-            <p className="text-xs text-text-muted">
-              We sent a confirmation link to{' '}
-              <strong className="text-text-main font-mono">{email}</strong>.
+            <p className="text-xs text-text-muted leading-relaxed">
+              If an account exists for{' '}
+              <strong className="text-text-main font-mono">{email}</strong>,
+              you&apos;ll find a password reset link there.
             </p>
-            <Link
-              to="/login"
-              className="inline-block pt-2 text-xs font-medium text-text-main underline hover:opacity-80 transition"
-            >
-              Return to sign in
-            </Link>
+            <div className="pt-2">
+              <Link to="/login">
+                <Button variant="primary" size="md" className="w-full">
+                  Back to sign in
+                </Button>
+              </Link>
+            </div>
           </div>
         ) : (
-          <form onSubmit={handleSubmit} className="space-y-4 pt-1">
+          <form noValidate onSubmit={handleSubmit} className="space-y-4 pt-1">
             <Input
               id="email"
               type="email"
               label="Email address"
+              autoComplete="email"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com"
-            />
-
-            <Input
-              id="password"
-              type="password"
-              label="Password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              helperText="Minimum 6 characters"
-            />
-
-            <Input
-              id="confirmPassword"
-              type="password"
-              label="Confirm password"
-              required
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="••••••••"
             />
 
             <div className="pt-2">
@@ -123,7 +109,7 @@ export function SignupPage() {
                 loading={isSubmitting}
                 className="w-full py-2.5 text-xs font-semibold"
               >
-                Create account
+                Send reset link
               </Button>
             </div>
           </form>
@@ -131,12 +117,12 @@ export function SignupPage() {
 
         {!isSuccess && (
           <p className="text-center text-xs text-text-subtle pt-2 border-t border-border-subtle/50">
-            Already have an account?{' '}
+            Remember your password?{' '}
             <Link
               to="/login"
               className="font-medium text-text-main underline hover:opacity-80 transition"
             >
-              Sign in
+              Back to sign in
             </Link>
           </p>
         )}

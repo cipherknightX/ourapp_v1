@@ -16,9 +16,31 @@ class Settings(BaseSettings):
     # Supabase / Auth configuration
     SUPABASE_URL: str = ""
     SUPABASE_PUBLISHABLE_KEY: str = ""
+    SUPABASE_SECRET_KEY: str = ""
+    SUPABASE_SERVICE_ROLE_KEY: str = ""
     SUPABASE_JWT_AUDIENCE: str = "authenticated"
     SUPABASE_JWKS_URL: str | None = None
     SUPABASE_JWT_ISSUER: str | None = None
+
+    # Meta / Instagram configuration
+    INSTAGRAM_VERIFY_TOKEN: str = ""
+    INSTAGRAM_APP_ID: str = ""
+    INSTAGRAM_APP_SECRET: str = ""
+    INSTAGRAM_ACCESS_TOKEN: str = ""
+    INSTAGRAM_GRAPH_API_VERSION: str = "v26.0"
+    INSTAGRAM_BOT_USERNAME: str = "save.this.for.me"
+
+    # Feature Flags
+    INSTAGRAM_POST_CAPTURE_ENABLED: bool = False
+
+    @property
+    def database_key(self) -> str:
+        """Returns the most privileged server key available for database operations."""
+        return (
+            self.SUPABASE_SERVICE_ROLE_KEY
+            or self.SUPABASE_SECRET_KEY
+            or self.SUPABASE_PUBLISHABLE_KEY
+        )
 
     @property
     def resolved_jwks_url(self) -> str | None:

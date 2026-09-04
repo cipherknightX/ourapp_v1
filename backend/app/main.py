@@ -3,6 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.auth import router as auth_router
 from app.api.health import router as health_router
+from app.api.instagram import router as instagram_router
+from app.api.saved_items import router as saved_items_router
+from app.api.webhooks import router as webhooks_router
 from app.core.config import settings
 
 
@@ -24,6 +27,9 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router)
     app.include_router(auth_router)
+    app.include_router(webhooks_router, prefix="/api/v1")
+    app.include_router(instagram_router, prefix="/api/v1")
+    app.include_router(saved_items_router, prefix="/api/v1")
 
     return app
 

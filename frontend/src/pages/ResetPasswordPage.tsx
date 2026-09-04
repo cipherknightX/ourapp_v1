@@ -1,19 +1,19 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import logoImg from '@/assets/logo.png';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { useAuth } from '@/features/auth/useAuth';
 
-export function SignupPage() {
-  const [email, setEmail] = useState('');
+export function ResetPasswordPage() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
 
-  const { signUp } = useAuth();
+  const { updatePassword, session } = useAuth();
+  const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -30,11 +30,13 @@ export function SignupPage() {
     }
 
     setIsSubmitting(true);
-    const { error: signUpError } = await signUp(email, password);
+    const { error: updateError } = await updatePassword(password);
     setIsSubmitting(false);
 
-    if (signUpError) {
-      setError(signUpError.message);
+    if (updateError) {
+      setError(
+        updateError.message || 'Failed to update password. Please try again.'
+      );
     } else {
       setIsSuccess(true);
     }
@@ -54,7 +56,9 @@ export function SignupPage() {
             SaveThisForMe
           </h1>
           <p className="text-xs text-text-muted">
-            Create your personal visual archive
+            {isSuccess
+              ? 'Your password has been changed'
+              : 'Choose a new password for your account'}
           </p>
         </div>
 
@@ -68,37 +72,34 @@ export function SignupPage() {
         )}
 
         {isSuccess ? (
-          <div className="rounded-sm border border-border-subtle bg-surface-subtle/50 p-6 text-center space-y-3">
+          <div className="rounded-sm border border-border-subtle bg-surface-subtle/50 p-6 text-center space-y-4">
             <h2 className="text-sm font-medium text-text-main">
-              Check your inbox
+              Password updated ♡
             </h2>
-            <p className="text-xs text-text-muted">
-              We sent a confirmation link to{' '}
-              <strong className="text-text-main font-mono">{email}</strong>.
+            <p className="text-xs text-text-muted leading-relaxed">
+              Your password has been updated successfully. You can now continue
+              to your library.
             </p>
-            <Link
-              to="/login"
-              className="inline-block pt-2 text-xs font-medium text-text-main underline hover:opacity-80 transition"
-            >
-              Return to sign in
-            </Link>
+            <div className="pt-2">
+              <Button
+                variant="primary"
+                size="md"
+                className="w-full"
+                onClick={() =>
+                  navigate(session ? '/app' : '/login', { replace: true })
+                }
+              >
+                {session ? 'Go to my library' : 'Sign in'}
+              </Button>
+            </div>
           </div>
         ) : (
-          <form onSubmit={handleSubmit} className="space-y-4 pt-1">
-            <Input
-              id="email"
-              type="email"
-              label="Email address"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
-            />
-
+          <form noValidate onSubmit={handleSubmit} className="space-y-4 pt-1">
             <Input
               id="password"
               type="password"
-              label="Password"
+              label="New password"
+              autoComplete="new-password"
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -109,7 +110,8 @@ export function SignupPage() {
             <Input
               id="confirmPassword"
               type="password"
-              label="Confirm password"
+              label="Confirm new password"
+              autoComplete="new-password"
               required
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
@@ -123,7 +125,7 @@ export function SignupPage() {
                 loading={isSubmitting}
                 className="w-full py-2.5 text-xs font-semibold"
               >
-                Create account
+                Update password
               </Button>
             </div>
           </form>
@@ -131,12 +133,12 @@ export function SignupPage() {
 
         {!isSuccess && (
           <p className="text-center text-xs text-text-subtle pt-2 border-t border-border-subtle/50">
-            Already have an account?{' '}
+            Never mind?{' '}
             <Link
               to="/login"
               className="font-medium text-text-main underline hover:opacity-80 transition"
             >
-              Sign in
+              Back to sign in
             </Link>
           </p>
         )}
